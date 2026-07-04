@@ -49,70 +49,69 @@ export function renderProduction() {
 
     const products = getProducts();
 
-    // Productos terminados: en este prototipo tratamos cualquier producto con fórmula definida como “producto a fabricar”.
     const buildables = products.filter((p) => Array.isArray(p.formula) && p.formula.length > 0);
 
     main.innerHTML = `
     <section>
-      <h2>Módulo de producción</h2>
-      <p>Selecciona un producto, cantidad a producir y genera un proceso con resumen de insumos.</p>
+        <h2>Módulo de producción</h2>
+        <p>Selecciona un producto, cantidad a producir y genera un proceso con resumen de insumos.</p>
 
-      <div class="grid two">
+        <div class="grid two">
         <div>
-          <h3>Nueva producción</h3>
-          <form id="production-form">
+            <h3>Nueva producción</h3>
+            <form id="production-form">
             <label>
-              Producto a fabricar
-              <select id="prod-to-make" required>
+                Producto a fabricar
+                <select id="prod-to-make" required>
                 ${buildables.length
             ? buildables.map((p) => `<option value="${p.code}">${p.code} - ${p.name}</option>`).join('')
             : '<option value="">No hay productos con fórmula definida</option>'}
-              </select>
+                </select>
             </label>
             <label>
-              Cantidad a producir
-              <input type="number" id="make-qty" min="1" step="1" required />
+                Cantidad a producir
+                <input type="number" id="make-qty" min="1" step="1" required />
             </label>
 
             <div class="actions">
-              <button class="primary" type="submit">Generar proceso</button>
-              <button class="ghost" type="button" id="btn-reset">Limpiar</button>
+                <button class="primary" type="submit">Generar proceso</button>
+                <button class="ghost" type="button" id="btn-reset">Limpiar</button>
             </div>
             <div id="prod-toast" class="toast" style="display:none"></div>
-          </form>
+            </form>
 
-          <h3>Resumen del proceso</h3>
-          <div id="process-summary">
+            <h3>Resumen del proceso</h3>
+            <div id="process-summary">
             <p>Selecciona un producto para ver la materia prima consumida y el producto terminado generado.</p>
-          </div>
+            </div>
         </div>
 
         <div>
-          <h3>Procesos realizados</h3>
-          <table>
+            <h3>Procesos realizados</h3>
+            <table>
             <thead>
-              <tr>
+                <tr>
                 <th>Código</th>
                 <th>Producto</th>
                 <th>Cantidad</th>
                 <th>Estado</th>
-              </tr>
+                </tr>
             </thead>
             <tbody id="process-tbody">
-              ${getProcesses().map((pr) => `
+                ${getProcesses().map((pr) => `
                 <tr>
-                  <td>${pr.code}</td>
-                  <td>${pr.productCode}</td>
-                  <td>${pr.quantity}</td>
-                  <td>${pr.status}</td>
+                    <td>${pr.code}</td>
+                    <td>${pr.productCode}</td>
+                    <td>${pr.quantity}</td>
+                    <td>${pr.status}</td>
                 </tr>
-              `).join('')}
+                `).join('')}
             </tbody>
-          </table>
+            </table>
         </div>
-      </div>
+        </div>
     </section>
-  `;
+    `;
 
     const toastEl = document.getElementById('prod-toast');
     const form = document.getElementById('production-form');
@@ -134,14 +133,13 @@ export function renderProduction() {
             return;
         }
 
-        // Consumir insumos = fórmula * cantidad.
         const consumed = product.formula.map((r) => ({ code: r.code, qty: r.qty * qty }));
 
         summaryEl.innerHTML = `
-      <p><b>Producto terminado:</b> ${product.code} - ${product.name}</p>
-      <p><b>Cantidad:</b> ${qty}</p>
-      <h4>Materia prima consumida</h4>
-      ${formatFormulaRows(consumed)}
+        <p><b>Producto terminado:</b> ${product.code} - ${product.name}</p>
+        <p><b>Cantidad:</b> ${qty}</p>
+        <h4>Materia prima consumida</h4>
+        ${formatFormulaRows(consumed)}
     `;
     }
 
@@ -179,8 +177,6 @@ export function renderProduction() {
 
         const allProducts = getProducts();
 
-        // Verificar stock suficiente
-        // Normalizamos códigos para evitar fallos por case / espacios.
         const shortages = [];
         const normalizeCode = (x) => String(x ?? '').trim().toUpperCase();
 
@@ -195,7 +191,6 @@ export function renderProduction() {
         const { codeNum, code } = nextProcessCode();
 
         if (shortages.length) {
-            // Mensaje visible con detalle.
             const detalle = shortages
                 .map((s) => {
                     const code = String(s.code ?? '').trim();
@@ -226,7 +221,6 @@ export function renderProduction() {
         }
 
 
-        // Descontar insumos
         const nextProducts = allProducts.map((p) => {
             const match = consumption.find((c) => normalizeCode(c.code) === normalizeCode(p.code));
             if (!match) return p;
@@ -236,7 +230,6 @@ export function renderProduction() {
 
         setProducts(nextProducts);
 
-        // Registrar proceso
         const processes = getProcesses();
         const nextProcesses = [
             {
@@ -252,7 +245,6 @@ export function renderProduction() {
         ];
         setProcesses(nextProcesses);
 
-        // Incrementar stock del producto terminado
         const pCodeNorm = String(product.code ?? '').trim().toUpperCase();
         const after = getProducts().map((p) =>
             normalizeCode(p.code) === pCodeNorm
