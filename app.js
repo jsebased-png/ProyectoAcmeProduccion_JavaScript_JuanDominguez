@@ -15,16 +15,17 @@ function setHandlers() {
         renderLogin();
     });
 
-    nav.users.addEventListener('click', () => {
-        renderUsers();
+    nav.users.addEventListener('click', async () => {
+        await renderUsers();
     });
 
-    nav.inventory.addEventListener('click', () => {
-        renderInventory();
+
+    nav.inventory.addEventListener('click', async () => {
+        await renderInventory();
     });
 
-    nav.production.addEventListener('click', () => {
-        renderProduction();
+    nav.production.addEventListener('click', async () => {
+        await renderProduction();
     });
 }
 
@@ -32,6 +33,9 @@ setHandlers();
 
 lockNav();
 renderLogin();
+
+
+
 
 window.__acme = { unlockNav };
 
