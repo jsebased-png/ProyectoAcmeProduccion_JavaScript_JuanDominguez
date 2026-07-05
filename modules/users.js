@@ -6,33 +6,40 @@ const KEYS = {
   users: 'acme_users',
 };
 
-function getSession() {
+async function getSession() {
   return storage.get(KEYS.session, null);
 }
 
-function getUsers() {
-  return storage.get(KEYS.users, []);
+
+async function getUsers() {
+  const users = await storage.get(KEYS.users, []);
+  return Array.isArray(users) ? users : [];
 }
 
-function setUsers(users) {
-  storage.set(KEYS.users, users);
+async function setUsers(users) {
+  await storage.set(KEYS.users, users);
 }
 
-function canAccess() {
-  return Boolean(getSession()?.userId);
+
+function canAccess(session) {
+  return Boolean(session?.userId);
 }
 
-export function renderUsers() {
+
+export async function renderUsers() {
   unlockNav();
 
   const main = document.getElementById('main-content');
-  if (!canAccess()) {
+  const session = await getSession();
+  if (!canAccess(session)) {
     main.innerHTML = `<section><h2>Usuarios</h2><p>Requiere login.</p></section>`;
     return;
   }
 
-  const users = getUsers();
+
+  const users = await getUsers();
   main.innerHTML = `
+
     <section>
       <h2>Módulo de usuarios</h2>
       <p>CRUD: crear / modificar / eliminar.</p>
@@ -115,14 +122,25 @@ export function renderUsers() {
     document.getElementById('user-id').disabled = !enabled;
   }
 
-  tbody.addEventListener('click', (e) => {
+  tbody.addEventListener('click', async (e) => {
+
     const btn = e.target.closest('button');
     if (!btn) return;
     const action = btn.dataset.action;
     const id = btn.dataset.id;
 
     if (action === 'edit') {
-      const u = getUsers().find((x) => String(x.id) === String(id));
+      const allUsers = await getUsers();
+      const safeUsers = Array.isArray(allUsers) ? allUsers : [];
+      let u = null;
+
+      for (const item of safeUsers) {
+        if (String(item?.id) === String(id)) {
+          u = item;
+          break;
+        }
+      }
+
       if (!u) return;
       editingId = u.id;
       document.getElementById('form-title').textContent = 'Modificar usuario';
@@ -136,9 +154,16 @@ export function renderUsers() {
 
     if (action === 'delete') {
       if (!confirm('¿Eliminar usuario?')) return;
-      const next = getUsers().filter((x) => String(x.id) !== String(id));
-      setUsers(next);
-      renderUsers();
+      const allUsers = await getUsers();
+      const safeUsers = Array.isArray(allUsers) ? allUsers : [];
+      const next = [];
+
+      for (const item of safeUsers) {
+        if (String(item?.id) !== String(id)) next.push(item);
+      }
+
+      await setUsers(next);
+      await renderUsers();
     }
   });
 
@@ -149,8 +174,12 @@ export function renderUsers() {
     document.getElementById('user-id').disabled = false;
   });
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
+
     e.preventDefault();
+
+    const users = await getUsers();
+
 
     const id = normalizeText(document.getElementById('user-id').value);
     const fullName = normalizeText(document.getElementById('user-name').value);
@@ -170,8 +199,13 @@ export function renderUsers() {
       return;
     }
 
-    const users = getUsers();
-    const exists = users.some((u) => String(u.id) === String(id));
+    let exists = false;
+    for (const u of users) {
+      if (String(u?.id) === String(id)) {
+        exists = true;
+        break;
+      }
+    }
 
     if (exists && !editingId) {
       toast(toastEl, { type: 'error', message: 'Ya existe un usuario con esa identificación.' });
@@ -179,19 +213,21 @@ export function renderUsers() {
       return;
     }
 
-    let next;
+    let next = [];
     if (editingId) {
-      next = users.map((u) => (String(u.id) === String(editingId)
-        ? { ...u, fullName, role, password: pass }
-        : u));
+      for (const u of users) {
+        if (String(u?.id) === String(editingId)) {
+          next.push({ ...u, fullName, role, password: pass });
+        } else {
+          next.push(u);
+        }
+      }
     } else {
-      next = [
-        ...users,
-        { id, fullName, role, password: pass },
-      ];
+      for (const u of users) next.push(u);
+      next.push({ id, fullName, role, password: pass });
     }
 
-    setUsers(next);
+    await setUsers(next);
     toast(toastEl, { type: 'success', message: 'Usuario guardado correctamente.' });
     toastEl.style.display = 'block';
 
@@ -200,8 +236,7 @@ export function renderUsers() {
     form.reset();
     setFormEnabled(true);
 
-    // Refrescar tabla
-    renderUsers();
+    await renderUsers();
   });
 }
 

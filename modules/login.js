@@ -5,19 +5,19 @@ const KEYS = {
     users: 'acme_users',
 };
 
-function getUsers() {
+async function getUsers() {
     return storage.get(KEYS.users, []);
 }
 
-function setUsers(users) {
-    storage.set(KEYS.users, users);
+async function setUsers(users) {
+    await storage.set(KEYS.users, users);
 }
 
-function ensureDefaultUsers() {
-    const users = getUsers();
+async function ensureDefaultUsers() {
+    const users = await getUsers();
     if (users.length > 0) return;
 
-    setUsers([
+    await setUsers([
         {
             id: '123',
             fullName: 'Juan Dominguez',
@@ -27,9 +27,10 @@ function ensureDefaultUsers() {
     ]);
 }
 
-function getSession() {
+async function getSession() {
     return storage.get(KEYS.session, null);
 }
+
 
 export function lockNav() {
     document.getElementById('nav-users').disabled = true;
@@ -43,11 +44,12 @@ export function unlockNav() {
     document.getElementById('nav-production').disabled = false;
 }
 
-export function renderLogin() {
-    ensureDefaultUsers();
+export async function renderLogin() {
+    await ensureDefaultUsers();
 
     const main = document.getElementById('main-content');
-    const session = getSession();
+    const session = await getSession();
+
 
     if (session?.userId) {
         unlockNav();
@@ -82,7 +84,8 @@ export function renderLogin() {
     const toastEl = document.getElementById('login-toast');
 
     const form = document.getElementById('login-form');
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
+
         e.preventDefault();
 
         const id = normalizeText(document.getElementById('login-id').value);
@@ -94,8 +97,9 @@ export function renderLogin() {
             return;
         }
 
-        const users = getUsers();
+        const users = await getUsers();
         const found = users.find((u) => String(u.id) === id && u.password === pass);
+
 
         if (!found) {
             toast(toastEl, { type: 'error', message: 'Credenciales inválidas.' });
@@ -114,6 +118,7 @@ export function renderLogin() {
         storage.set(KEYS.session, null);
         lockNav();
         renderLogin();
+
     });
 }
 

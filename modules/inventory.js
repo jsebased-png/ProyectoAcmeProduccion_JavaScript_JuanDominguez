@@ -6,32 +6,34 @@ const KEYS = {
     products: 'acme_products',
 };
 
-function getSession() {
+async function getSession() {
     return storage.get(KEYS.session, null);
 }
 
-function getProducts() {
+async function getProducts() {
     return storage.get(KEYS.products, []);
 }
 
-function setProducts(products) {
-    storage.set(KEYS.products, products);
+async function setProducts(products) {
+    await storage.set(KEYS.products, products);
 }
 
-function canAccess() {
-    return Boolean(getSession()?.userId);
+async function canAccess() {
+    const s = await getSession();
+    return Boolean(s?.userId);
 }
 
-export function renderInventory() {
+export async function renderInventory() {
     unlockNav();
 
     const main = document.getElementById('main-content');
-    if (!canAccess()) {
+    if (!(await canAccess())) {
         main.innerHTML = `<section><h2>Inventario</h2><p>Requiere login.</p></section>`;
         return;
     }
 
-    const products = getProducts();
+    const products = await getProducts();
+
 
     main.innerHTML = `
       <section>
@@ -118,8 +120,8 @@ export function renderInventory() {
     const clearBtn = document.getElementById('btn-clear');
     const stockForm = document.getElementById('stock-form');
 
-    function refreshTable(filter = '') {
-        const all = getProducts();
+    async function refreshTable(filter = '') {
+        const all = await getProducts();
         const term = normalizeText(filter).toLowerCase();
         const filtered = !term
             ? all
@@ -137,6 +139,7 @@ export function renderInventory() {
         }
     }
 
+
     function rowHtml(p) {
         return `
       <tr>
@@ -153,11 +156,12 @@ export function renderInventory() {
     `;
     }
 
-    refreshTable();
+    await refreshTable();
+
 
     search.addEventListener('input', () => refreshTable(search.value));
 
-    tbody.addEventListener('click', (e) => {
+    tbody.addEventListener('click', async (e) => {
         const btn = e.target.closest('button');
         if (!btn) return;
         const action = btn.dataset.action;
@@ -165,15 +169,34 @@ export function renderInventory() {
 
         if (action === 'delete') {
             if (!confirm('¿Eliminar producto?')) return;
-            const next = getProducts().filter((p) => String(p.code) !== String(code));
-            setProducts(next);
-            renderInventory();
+            const allProducts = await getProducts();
+            const safeProducts = Array.isArray(allProducts) ? allProducts : [];
+            const next = [];
+            for (const p of safeProducts) {
+                if (String(p?.code) !== String(code)) next.push(p);
+            }
+            await setProducts(next);
+            await renderInventory();
             return;
         }
 
         if (action === 'edit') {
-            const p = getProducts().find((x) => String(x.code) === String(code));
-            if (!p) return;
+            const allProducts = await getProducts();
+            const safeProducts = Array.isArray(allProducts) ? allProducts : [];
+
+            let p = null;
+            for (const item of safeProducts) {
+                if (String(item?.code) === String(code)) {
+                    p = item;
+                    break;
+                }
+            }
+
+            if (!p) {
+                toast(toastEl, { type: 'error', message: 'Producto no encontrado para edición.' });
+                toastEl.style.display = 'block';
+                return;
+            }
 
             document.getElementById('prod-code').value = p.code;
             document.getElementById('prod-code').disabled = true;
@@ -183,6 +206,7 @@ export function renderInventory() {
 
             productForm.dataset.editing = String(code);
             document.querySelector('#product-form button.primary').textContent = 'Guardar cambios';
+            toastEl.style.display = 'none';
             return;
         }
 
@@ -202,7 +226,8 @@ export function renderInventory() {
         toastEl.style.display = 'none';
     });
 
-    productForm.addEventListener('submit', (e) => {
+    productForm.addEventListener('submit', async (e) => {
+
         e.preventDefault();
 
         const editingCode = productForm.dataset.editing;
@@ -212,6 +237,7 @@ export function renderInventory() {
         const supplier = normalizeText(document.getElementById('prod-supplier').value);
         const formulaText = document.getElementById('prod-formula').value;
 
+
         if (!required(code) || !required(name) || !required(supplier)) {
             toast(toastEl, { type: 'error', message: 'Completa código, nombre y proveedor.' });
             toastEl.style.display = 'block';
@@ -219,9 +245,16 @@ export function renderInventory() {
         }
 
         const parsedFormula = parseFormula(formulaText);
-        const products = getProducts();
+        const products = await getProducts();
 
-        const exists = products.some((p) => String(p.code) === String(code));
+        let exists = false;
+        for (const p of (Array.isArray(products) ? products : [])) {
+            if (String(p?.code) === String(code)) {
+                exists = true;
+                break;
+            }
+        }
+
 
         if (exists && !editingCode) {
             toast(toastEl, { type: 'error', message: 'Ya existe un producto con ese código.' });
@@ -243,12 +276,13 @@ export function renderInventory() {
             ];
         }
 
-        setProducts(next);
+        await setProducts(next);
         toastEl.style.display = 'none';
-        renderInventory();
+        await renderInventory();
     });
 
-    stockForm.addEventListener('submit', (e) => {
+    stockForm.addEventListener('submit', async (e) => {
+
         e.preventDefault();
         const code = normalizeText(document.getElementById('stock-code').value);
         const qty = Number(document.getElementById('stock-qty').value);
@@ -259,14 +293,30 @@ export function renderInventory() {
             return;
         }
 
-        const products = getProducts();
-        const next = products.map((p) => (
-            String(p.code) === String(code) ? { ...p, stock: Number(p.stock) + qty } : p
-        ));
+        const products = await getProducts();
+        const safeProducts = Array.isArray(products) ? products : [];
 
-        setProducts(next);
+        let found = false;
+        const next = [];
+        for (const p of safeProducts) {
+            if (String(p?.code) === String(code)) {
+                found = true;
+                next.push({ ...p, stock: Number(p?.stock ?? 0) + qty });
+            } else {
+                next.push(p);
+            }
+        }
+
+        if (!found) {
+            toast(toastEl, { type: 'error', message: 'Producto no encontrado para actualizar stock.' });
+            toastEl.style.display = 'block';
+            return;
+        }
+
+        await setProducts(next);
         document.getElementById('stock-qty').value = '';
-        renderInventory();
+        toastEl.style.display = 'none';
+        await renderInventory();
     });
 }
 

@@ -7,51 +7,61 @@ const KEYS = {
     processes: 'acme_processes'
 };
 
-function getSession() {
+async function getSession() {
     return storage.get(KEYS.session, null);
 }
 
-function getProducts() {
-    return storage.get(KEYS.products, []);
+
+async function getProducts() {
+    const products = await storage.get(KEYS.products, []);
+    return Array.isArray(products) ? products : [];
 }
 
-function setProducts(products) {
-    storage.set(KEYS.products, products);
+async function setProducts(products) {
+    await storage.set(KEYS.products, products);
 }
 
-function getProcesses() {
-    return storage.get(KEYS.processes, []);
+
+async function getProcesses() {
+    const processes = await storage.get(KEYS.processes, []);
+    return Array.isArray(processes) ? processes : [];
 }
 
-function setProcesses(p) {
-    storage.set(KEYS.processes, p);
+async function setProcesses(p) {
+    await storage.set(KEYS.processes, p);
 }
 
-function canAccess() {
-    return Boolean(getSession()?.userId);
+function canAccess(session) {
+    return Boolean(session?.userId);
 }
 
-function nextProcessCode() {
-    const list = getProcesses();
+
+async function nextProcessCode() {
+    const list = await getProcesses();
     const max = list.reduce((acc, pr) => Math.max(acc, Number(pr.codeNum) || 0), 0);
     const n = max + 1;
     return { codeNum: n, code: `P-${String(n).padStart(4, '0')}` };
 }
 
-export function renderProduction() {
+
+export async function renderProduction() {
     unlockNav();
 
     const main = document.getElementById('main-content');
-    if (!canAccess()) {
+    const session = await getSession();
+    if (!canAccess(session)) {
         main.innerHTML = `<section><h2>Producción</h2><p>Requiere login.</p></section>`;
         return;
     }
 
-    const products = getProducts();
+    const products = await getProducts();
+
 
     const buildables = products.filter((p) => Array.isArray(p.formula) && p.formula.length > 0);
+    const processes = await getProcesses();
 
     main.innerHTML = `
+
     <section>
         <h2>Módulo de producción</h2>
         <p>Selecciona un producto, cantidad a producir y genera un proceso con resumen de insumos.</p>
@@ -98,7 +108,8 @@ export function renderProduction() {
                 </tr>
             </thead>
             <tbody id="process-tbody">
-                ${getProcesses().map((pr) => `
+                ${processes.map((pr) => `
+
                 <tr>
                     <td>${pr.code}</td>
                     <td>${pr.productCode}</td>
@@ -147,7 +158,8 @@ export function renderProduction() {
     document.getElementById('make-qty').addEventListener('input', updateSummary);
     updateSummary();
 
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
+
         e.preventDefault();
 
         const productCode = document.getElementById('prod-to-make').value;
@@ -159,7 +171,17 @@ export function renderProduction() {
             return;
         }
 
-        const product = getProducts().find((p) => String(p.code) === String(productCode));
+        const allProductsRaw = await getProducts();
+        const allProducts = Array.isArray(allProductsRaw) ? allProductsRaw : [];
+
+        let product = null;
+        for (const p of allProducts) {
+            if (String(p?.code) === String(productCode)) {
+                product = p;
+                break;
+            }
+        }
+
         if (!product) {
             toast(toastEl, { type: 'error', message: 'Producto no encontrado.' });
             toastEl.style.display = 'block';
@@ -173,36 +195,49 @@ export function renderProduction() {
             return;
         }
 
-        const consumption = formula.map((r) => ({ code: r.code, qty: r.qty * quantity }));
-
-        const allProducts = getProducts();
+        const consumption = [];
+        for (const r of formula) {
+            consumption.push({ code: r.code, qty: r.qty * quantity });
+        }
 
         const shortages = [];
         const normalizeCode = (x) => String(x ?? '').trim().toUpperCase();
 
         for (const c of consumption) {
             const cCode = normalizeCode(c.code);
-            const insumo = allProducts.find((p) => normalizeCode(p.code) === cCode);
+            let insumo = null;
+            for (const p of allProducts) {
+                if (normalizeCode(p?.code) === cCode) {
+                    insumo = p;
+                    break;
+                }
+            }
+
             const stock = Number(insumo?.stock ?? 0);
-            if (stock < c.qty) shortages.push({ code: c.code, need: c.qty, stock, found: Boolean(insumo) });
+            if (stock < c.qty) {
+                shortages.push({ code: c.code, need: c.qty, stock, found: Boolean(insumo) });
+            }
         }
 
-
-        const { codeNum, code } = nextProcessCode();
+        const { codeNum, code } = await nextProcessCode();
 
         if (shortages.length) {
-            const detalle = shortages
-                .map((s) => {
-                    const code = String(s.code ?? '').trim();
-                    if (!s.found) return `- ${code}: no existe en inventario`;
-                    return `- ${code}: stock ${s.stock} < requerido ${s.need}`;
-                })
-                .join('\n');
+            const detalleParts = [];
+            for (const s of shortages) {
+                const sCode = String(s.code ?? '').trim();
+                if (!s.found) {
+                    detalleParts.push(`- ${sCode}: no existe en inventario`);
+                } else {
+                    detalleParts.push(`- ${sCode}: stock ${s.stock} < requerido ${s.need}`);
+                }
+            }
+            const detalle = detalleParts.join('\n');
 
             toast(toastEl, { type: 'error', message: `Proceso fallido.\n${detalle}` });
             toastEl.style.display = 'block';
 
-            const processes = getProcesses();
+            const processesRaw = await getProcesses();
+            const processes = Array.isArray(processesRaw) ? processesRaw : [];
             const next = [
                 {
                     code,
@@ -215,22 +250,38 @@ export function renderProduction() {
                 },
                 ...processes
             ];
-            setProcesses(next);
-            renderProduction();
+            await setProcesses(next);
+            await renderProduction();
             return;
         }
 
+        const nextProducts = [];
+        for (const p of allProducts) {
+            let discounted = false;
+            for (const c of consumption) {
+                if (normalizeCode(c.code) === normalizeCode(p?.code)) {
+                    nextProducts.push({ ...p, stock: Number(p?.stock ?? 0) - c.qty });
+                    discounted = true;
+                    break;
+                }
+            }
+            if (!discounted) nextProducts.push(p);
+        }
 
-        const nextProducts = allProducts.map((p) => {
-            const match = consumption.find((c) => normalizeCode(c.code) === normalizeCode(p.code));
-            if (!match) return p;
-            return { ...p, stock: Number(p.stock) - match.qty };
-        });
+        const finalProducts = [];
+        const pCodeNorm = normalizeCode(product.code);
+        for (const p of nextProducts) {
+            if (normalizeCode(p?.code) === pCodeNorm) {
+                finalProducts.push({ ...p, stock: Number(p?.stock ?? 0) + quantity });
+            } else {
+                finalProducts.push(p);
+            }
+        }
 
+        await setProducts(finalProducts);
 
-        setProducts(nextProducts);
-
-        const processes = getProcesses();
+        const processesRaw = await getProcesses();
+        const processes = Array.isArray(processesRaw) ? processesRaw : [];
         const nextProcesses = [
             {
                 code,
@@ -243,19 +294,10 @@ export function renderProduction() {
             },
             ...processes
         ];
-        setProcesses(nextProcesses);
-
-        const pCodeNorm = String(product.code ?? '').trim().toUpperCase();
-        const after = getProducts().map((p) =>
-            normalizeCode(p.code) === pCodeNorm
-                ? { ...p, stock: Number(p.stock) + quantity }
-                : p
-        );
-
-        setProducts(after);
+        await setProcesses(nextProcesses);
 
         toastEl.style.display = 'none';
-        renderProduction();
+        await renderProduction();
     });
 
     document.getElementById('btn-reset').addEventListener('click', () => {
