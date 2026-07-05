@@ -32,7 +32,7 @@ header {
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
   padding: 20px 14px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 header h1 {
@@ -41,14 +41,22 @@ header h1 {
   font-weight: 600;
   text-align: center;
   letter-spacing: 2px;
-  header h1 {
-  animation: fadeInDown 0.6s ease;
-}
 
-@keyframes fadeInDown {
-  from { opacity: 0; transform: translateY(-10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+  header h1 {
+    animation: fadeInDown 0.6s ease;
+  }
+
+  @keyframes fadeInDown {
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
 
 }
 
@@ -110,7 +118,7 @@ nav button[disabled] {
 }
 
 main {
-  max-width: 1360px;
+  max-width: 1450px;
   margin: 18px auto;
   padding: 0 14px 28px;
 }
