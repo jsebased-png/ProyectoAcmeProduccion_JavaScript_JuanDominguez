@@ -8,7 +8,7 @@ Aplicación web (HTML + CSS + JavaScript) para gestionar:
 - **Producción** (procesos con resumen de insumos y generación de producto terminado)
 
 > Nota: Este prototipo usa **localStorage** para persistir datos (sin backend).
-
+ 
 ## Requerimientos previos
 - Navegador moderno (Chrome/Edge/Firefox)
 - Tener la carpeta del proyecto en tu equipo
