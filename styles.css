@@ -161,6 +161,10 @@ p {
 }
 
 @media (min-width: 1200px) {
+  .grid.two {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .grid.three {
     grid-template-columns: 1fr 1fr 1fr;
   }
