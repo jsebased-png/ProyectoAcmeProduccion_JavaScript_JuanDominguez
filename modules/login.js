@@ -5,6 +5,8 @@ const KEYS = {
     users: 'acme_users',
 };
 
+const CURRENT_SESSION_ID_KEY = 'current_session_id';
+
 async function getUsers() {
     return storage.get(KEYS.users, []);
 }
@@ -100,14 +102,23 @@ export async function renderLogin() {
         const users = await getUsers();
         const found = users.find((u) => String(u.id) === id && u.password === pass);
 
-
         if (!found) {
             toast(toastEl, { type: 'error', message: 'Credenciales inválidas.' });
             toastEl.style.display = 'block';
             return;
         }
 
-        storage.set(KEYS.session, { userId: found.id, ts: Date.now() });
+        const sessionId = Date.now().toString();
+        localStorage.setItem(CURRENT_SESSION_ID_KEY, sessionId);
+
+        const updatedUsers = users.map((u) =>
+            String(u.id) === String(found.id)
+                ? { ...u, activeSessionId: sessionId }
+                : u
+        );
+        await setUsers(updatedUsers);
+
+        await storage.set(KEYS.session, { userId: found.id, ts: Date.now() });
         unlockNav();
         toastEl.style.display = 'none';
         alert('Login exitoso');
@@ -115,6 +126,7 @@ export async function renderLogin() {
 
     const logoutBtn = document.getElementById('btn-logout');
     logoutBtn?.addEventListener('click', () => {
+        localStorage.removeItem(CURRENT_SESSION_ID_KEY);
         storage.set(KEYS.session, null);
         lockNav();
         renderLogin();
