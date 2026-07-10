@@ -1,5 +1,17 @@
 import { storage, normalizeText, required, toast, parseFormula, formatFormulaRows } from './utils.js';
 import { unlockNav } from './login.js';
+import { db } from '../firebase.js';
+import {
+    collection,
+    query,
+    orderBy,
+    limit,
+    getDocs,
+    doc,
+    setDoc,
+    increment,
+    writeBatch
+} from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
 
 const KEYS = {
     session: 'acme_session',
@@ -29,6 +41,208 @@ async function getProcesses() {
 
 async function setProcesses(p) {
     await storage.set(KEYS.processes, p);
+}
+
+async function getTop5ProducedProducts() {
+    const totalsRef = collection(db, 'production_totals');
+    const q = query(totalsRef, orderBy('totalProduced', 'desc'), limit(5));
+    const snap = await getDocs(q);
+
+    const out = [];
+    snap.forEach((d) => {
+        const data = d.data() ?? {};
+        out.push({
+            productCode: data.productCode ?? d.id,
+            productName: data.productName ?? data.productCode ?? d.id,
+            totalProduced: Number(data.totalProduced ?? 0)
+        });
+    });
+    return out;
+}
+
+async function increaseProductionTotal({ productCode, productName, quantity }) {
+    const safeCode = String(productCode ?? '').trim().toUpperCase();
+    if (!safeCode || !Number.isFinite(Number(quantity)) || Number(quantity) <= 0) return;
+
+    const ref = doc(db, 'production_totals', safeCode);
+    await setDoc(ref, {
+        productCode: safeCode,
+        productName: String(productName ?? '').trim() || safeCode,
+        totalProduced: increment(Number(quantity)),
+        updatedAt: Date.now()
+    }, { merge: true });
+}
+
+async function resetProductionTotals() {
+    const totalsRef = collection(db, 'production_totals');
+    const snap = await getDocs(totalsRef);
+
+    if (snap.empty) return;
+
+    const docs = [];
+    snap.forEach((d) => docs.push(d));
+
+    const chunkSize = 450;
+    for (let i = 0; i < docs.length; i += chunkSize) {
+        const batch = writeBatch(db);
+        const chunk = docs.slice(i, i + chunkSize);
+        for (const d of chunk) {
+            batch.delete(d.ref);
+        }
+        await batch.commit();
+    }
+}
+
+async function reconcileProductionTotalsFromProcesses() {
+    const processesRaw = await getProcesses();
+    const processes = Array.isArray(processesRaw) ? processesRaw : [];
+
+    const totalsByCode = new Map();
+    for (const pr of processes) {
+        if (String(pr?.status ?? '') !== 'OK') continue;
+
+        const code = String(pr?.productCode ?? '').trim().toUpperCase();
+        const qty = Number(pr?.quantity ?? 0);
+        if (!code || !Number.isFinite(qty) || qty <= 0) continue;
+
+        const current = totalsByCode.get(code) ?? { productCode: code, productName: code, totalProduced: 0 };
+        current.totalProduced += qty;
+        totalsByCode.set(code, current);
+    }
+
+    const products = await getProducts();
+    const nameByCode = new Map();
+    for (const p of products) {
+        const code = String(p?.code ?? '').trim().toUpperCase();
+        if (!code) continue;
+        const name = String(p?.name ?? '').trim() || code;
+        nameByCode.set(code, name);
+    }
+
+    for (const [code, total] of totalsByCode.entries()) {
+        total.productName = nameByCode.get(code) ?? total.productName ?? code;
+    }
+
+    const totalsRef = collection(db, 'production_totals');
+    const currentSnap = await getDocs(totalsRef);
+
+    const existingCodes = new Set();
+    const existingDocsByCode = new Map();
+    currentSnap.forEach((d) => {
+        const data = d.data() ?? {};
+        const code = String(data.productCode ?? d.id ?? '').trim().toUpperCase();
+        if (!code) return;
+        existingCodes.add(code);
+        existingDocsByCode.set(code, d.ref);
+    });
+
+    const chunkSize = 450;
+    const entries = Array.from(totalsByCode.entries());
+    for (let i = 0; i < entries.length; i += chunkSize) {
+        const batch = writeBatch(db);
+        const chunk = entries.slice(i, i + chunkSize);
+        for (const [code, total] of chunk) {
+            const ref = doc(db, 'production_totals', code);
+            batch.set(ref, {
+                productCode: code,
+                productName: total.productName ?? code,
+                totalProduced: Number(total.totalProduced ?? 0),
+                updatedAt: Date.now()
+            }, { merge: true });
+        }
+        await batch.commit();
+    }
+
+    const orphanCodes = [];
+    for (const code of existingCodes) {
+        if (!totalsByCode.has(code)) orphanCodes.push(code);
+    }
+
+    for (let i = 0; i < orphanCodes.length; i += chunkSize) {
+        const batch = writeBatch(db);
+        const chunk = orphanCodes.slice(i, i + chunkSize);
+        for (const code of chunk) {
+            const ref = existingDocsByCode.get(code) ?? doc(db, 'production_totals', code);
+            batch.delete(ref);
+        }
+        await batch.commit();
+    }
+}
+
+function buildRawMaterialBreakdown(topProducts, allProducts) {
+    const byCode = new Map();
+    for (const p of allProducts) {
+        byCode.set(String(p?.code ?? '').trim().toUpperCase(), p);
+    }
+
+    return topProducts.map((tp) => {
+        const pCode = String(tp.productCode ?? '').trim().toUpperCase();
+        const product = byCode.get(pCode);
+        const formula = Array.isArray(product?.formula) ? product.formula : parseFormula(product?.formulaText);
+
+        const materials = (Array.isArray(formula) ? formula : []).map((item) => {
+            const unitQty = Number(item?.qty ?? 0);
+            const totalUsed = unitQty * Number(tp.totalProduced ?? 0);
+            return {
+                code: String(item?.code ?? '').trim().toUpperCase(),
+                unitQty,
+                totalUsed
+            };
+        });
+
+        return {
+            productCode: tp.productCode,
+            productName: tp.productName,
+            totalProduced: Number(tp.totalProduced ?? 0),
+            materials
+        };
+    });
+}
+
+function renderTop5ReportHTML(rows) {
+    if (!Array.isArray(rows) || rows.length === 0) {
+        return `
+        <section class="report-empty card" aria-live="polite">
+            <p>No hay datos de producción acumulada para mostrar el Top 5 todavía.</p>
+        </section>
+        `;
+    }
+
+    return `
+    <section class="report-grid" aria-label="Top 5 productos más fabricados">
+        ${rows.map((row, idx) => `
+            <article class="product-card">
+                <header class="product-card__header">
+                    <span class="ranking-badge" aria-label="Puesto ${idx + 1}">#${idx + 1}</span>
+                    <div class="product-card__title-wrap">
+                        <h4 class="product-card__title">${row.productName}</h4>
+                        <p class="product-card__code">Código: <strong>${row.productCode}</strong></p>
+                    </div>
+                </header>
+
+                <section class="total-panel" aria-label="Total fabricado">
+                    <p class="total-panel__label">Total fabricado</p>
+                    <p class="total-panel__value">${row.totalProduced}</p>
+                </section>
+
+                <section class="materials-panel" aria-label="Materia prima total usada">
+                    <h5 class="materials-panel__title">Materia prima total usada</h5>
+                    ${row.materials.length
+                        ? `<ul class="materials-list">
+                            ${row.materials.map((m) => `
+                                <li class="materials-list__row">
+                                    <span class="materials-list__code"><strong>${m.code}</strong></span>
+                                    <span class="materials-list__calc">${m.unitQty} x ${row.totalProduced}</span>
+                                    <span class="materials-list__total">${m.totalUsed}</span>
+                                </li>
+                            `).join('')}
+                        </ul>`
+                        : '<p class="materials-panel__empty">Sin receta/fórmula registrada para este producto.</p>'}
+                </section>
+            </article>
+        `).join('')}
+    </section>
+    `;
 }
 
 function canAccess(session) {
@@ -119,6 +333,14 @@ export async function renderProduction() {
                 `).join('')}
             </tbody>
             </table>
+
+            <h3>Reporte: Top 5 productos más fabricados</h3>
+            <div class="actions">
+                <button class="primary" type="button" id="btn-refresh-top5"> Actualizar Reporte</button>
+            </div>
+            <div id="top5-report">
+                <p>Cargando reporte...</p>
+            </div>
         </div>
         </div>
     </section>
@@ -127,7 +349,34 @@ export async function renderProduction() {
     const toastEl = document.getElementById('prod-toast');
     const form = document.getElementById('production-form');
     const summaryEl = document.getElementById('process-summary');
-    const processesTbody = document.getElementById('process-tbody');
+    const top5ReportEl = document.getElementById('top5-report');
+    const btnRefreshTop5 = document.getElementById('btn-refresh-top5');
+
+    async function refreshTop5Report() {
+        const defaultBtnText = '🔄 Actualizar Reporte';
+        try {
+            if (btnRefreshTop5) {
+                btnRefreshTop5.disabled = true;
+                btnRefreshTop5.textContent = 'Actualizando...';
+            }
+
+            top5ReportEl.innerHTML = '<p>Cargando reporte...</p>';
+
+            await reconcileProductionTotalsFromProcesses();
+            const top5 = await getTop5ProducedProducts();
+            const allProducts = await getProducts();
+            const rows = buildRawMaterialBreakdown(top5, allProducts);
+            top5ReportEl.innerHTML = renderTop5ReportHTML(rows);
+        } catch (err) {
+            console.error('Error cargando reporte Top 5:', err);
+            top5ReportEl.innerHTML = '<p>No se pudo cargar el reporte Top 5 en este momento.</p>';
+        } finally {
+            if (btnRefreshTop5) {
+                btnRefreshTop5.disabled = false;
+                btnRefreshTop5.textContent = defaultBtnText;
+            }
+        }
+    }
 
     function updateSummary() {
         const code = document.getElementById('prod-to-make').value;
@@ -156,7 +405,11 @@ export async function renderProduction() {
 
     document.getElementById('prod-to-make').addEventListener('change', updateSummary);
     document.getElementById('make-qty').addEventListener('input', updateSummary);
+    if (btnRefreshTop5) {
+        btnRefreshTop5.addEventListener('click', refreshTop5Report);
+    }
     updateSummary();
+    await refreshTop5Report();
 
     form.addEventListener('submit', async (e) => {
 
@@ -279,6 +532,11 @@ export async function renderProduction() {
         }
 
         await setProducts(finalProducts);
+        await increaseProductionTotal({
+            productCode: product.code,
+            productName: product.name,
+            quantity
+        });
 
         const processesRaw = await getProcesses();
         const processes = Array.isArray(processesRaw) ? processesRaw : [];
